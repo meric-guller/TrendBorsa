@@ -24,6 +24,9 @@ func main() {
 	eng := engine.New(s, h, cfg.TickInterval)
 	go eng.Run(context.Background())
 
+	cleaner := engine.NewLockCleaner(s, h)
+	go cleaner.Run(context.Background())
+
 	dropH := handler.NewDropHandler(s, h)
 	purchaseH := handler.NewPurchaseHandler(s, h)
 	wsH := handler.NewWSHandler(h)
@@ -50,7 +53,9 @@ func main() {
 		r.Get("/{id}", dropH.Get)
 		r.Get("/{id}/history", dropH.History)
 		r.Get("/{id}/stats", dropH.Stats)
-		r.Post("/{id}/buy", purchaseH.Buy)
+		r.Post("/{id}/lock", purchaseH.Lock)
+		r.Post("/{id}/confirm", purchaseH.Confirm)
+		r.Post("/{id}/cancel", purchaseH.Cancel)
 	})
 
 	r.Get("/ws/drops/{id}", wsH.Handle)

@@ -77,3 +77,26 @@ type DropEndedEvent struct {
 	FinalPrice float64 `json:"final_price"`
 	TotalSold  int     `json:"total_sold"`
 }
+
+type PriceLock struct {
+	ID          string    `json:"id"`
+	DropID      string    `json:"drop_id"`
+	UserID      string    `json:"user_id"`
+	LockedPrice float64   `json:"locked_price"`
+	Quantity    int       `json:"quantity"`
+	Status      string    `json:"status"` // pending, confirmed, expired, cancelled
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+type PriceLockEvent struct {
+	Type     string `json:"type"`
+	DropID   string `json:"drop_id"`
+	Quantity int    `json:"quantity"`
+}
+
+type LockExpiredEvent struct {
+	Type     string `json:"type"`
+	DropID   string `json:"drop_id"`
+	Quantity int    `json:"quantity"`
+}

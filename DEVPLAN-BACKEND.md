@@ -29,13 +29,18 @@ All backend steps are implemented and verified.
 > - `active -> ended` when `EndsAt` reached or stock depleted
 > - Broadcasts `DROP_STATUS` and `DROP_ENDED` events
 
-### STEP 4: Buy Endpoint
-> **File:** `internal/handler/purchase_handler.go`
+### STEP 4: Two-Step Buy Flow (Lock → Confirm)
+> **Files:** `internal/handler/purchase_handler.go`, `internal/model/model.go`, `internal/store/memory.go`, `internal/engine/lock_cleaner.go`
 > **Status:** COMPLETE
-> - `POST /api/drops/{id}/buy` with `{ user_id, quantity }`
-> - Validates: active status, stock, per-user limit (max 3)
-> - Atomic price lock + stock decrement
-> - Broadcasts `PURCHASE_FEED` and `STOCK_UPDATE`
+> - `POST /api/drops/{id}/lock` — locks price for 30s, reserves stock atomically
+> - `POST /api/drops/{id}/confirm` — finalizes lock into purchase within 30s window
+> - `POST /api/drops/{id}/cancel` — user cancels lock, stock restored
+> - `PriceLock` model with status: pending/confirmed/expired/cancelled
+> - `ReserveStock()` — atomic check-and-decrement (user limit counts pending locks + confirmed purchases)
+> - `RestoreStock()` — returns stock on cancel/expiry
+> - `LockCleaner` goroutine (5s ticker) expires stale locks and restores stock
+> - New WS events: `PRICE_LOCK`, `LOCK_EXPIRED`
+> - Broadcasts `STOCK_UPDATE` on lock/confirm/cancel/expiry, `PURCHASE_FEED` on confirm
 
 ### STEP 5: Admin Create Drop + Stats
 > **File:** `internal/handler/drop_handler.go`
@@ -56,7 +61,9 @@ All backend steps are implemented and verified.
 | `GET` | `/api/drops/{id}` | Drop detail |
 | `GET` | `/api/drops/{id}/history` | Price history |
 | `GET` | `/api/drops/{id}/stats` | Live stats |
-| `POST` | `/api/drops/{id}/buy` | Buy |
+| `POST` | `/api/drops/{id}/lock` | Lock price (30s) |
+| `POST` | `/api/drops/{id}/confirm` | Confirm purchase |
+| `POST` | `/api/drops/{id}/cancel` | Cancel lock |
 | `WS` | `/ws/drops/{id}` | Real-time events |
 
 ## Running

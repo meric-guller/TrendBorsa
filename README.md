@@ -120,10 +120,10 @@ Call once on entry. Use `time_remaining_seconds` to seed countdown, then decreme
 
 ---
 
-### 5. Buy
+### 5. Lock Price (Step 1 of Buy)
 
 ```
-POST /api/drops/{id}/buy
+POST /api/drops/{id}/lock
 Content-Type: application/json
 
 {"user_id": "unique-user-id", "quantity": 1}
@@ -132,22 +132,26 @@ Content-Type: application/json
 | Field | Type | Rules |
 |-------|------|-------|
 | `user_id` | string | Required |
-| `quantity` | int | 1-3. Total per user per drop max 3. |
+| `quantity` | int | 1-3. Total per user per drop max 3 (pending locks + confirmed purchases combined). |
 
 **Response** `200 OK`
 ```json
 {
-  "purchase": {
-    "id": "417fc2c9-22f4-4875-af86-b84fe82a7edc",
+  "lock": {
+    "id": "87fa955c-c6e8-4b64-b762-8c8e26ad00a9",
     "drop_id": "drop-1",
     "user_id": "user1",
-    "price": 8999.00,
-    "quantity": 2,
-    "created_at": "2026-05-07T16:35:37+03:00"
+    "locked_price": 8999.00,
+    "quantity": 1,
+    "status": "pending",
+    "created_at": "2026-05-07T16:35:37+03:00",
+    "expires_at": "2026-05-07T16:36:07+03:00"
   },
-  "message": "Purchase successful"
+  "message": "Price locked for 30 seconds"
 }
 ```
+
+Stock is reserved immediately. Price is locked for **30 seconds**. User must call `/confirm` within that window.
 
 **Errors:**
 
@@ -158,14 +162,71 @@ Content-Type: application/json
 | `400` | `quantity must be between 1 and 3` | Invalid qty |
 | `404` | `drop not found` | Bad ID |
 | `409` | `drop is not active` | Not active |
-| `409` | `purchase limit exceeded (max 3 per user)` | Over limit |
+| `409` | `purchase limit exceeded` | Over limit (locks + purchases > 3) |
 | `409` | `not enough stock` | Sold out |
-
-Price is locked atomically at request time. No separate lock step needed.
 
 ---
 
-### 6. Create Drop (Admin)
+### 6. Confirm Purchase (Step 2 of Buy)
+
+```
+POST /api/drops/{id}/confirm
+Content-Type: application/json
+
+{"lock_id": "87fa955c-c6e8-4b64-b762-8c8e26ad00a9"}
+```
+
+**Response** `200 OK`
+```json
+{
+  "purchase": {
+    "id": "417fc2c9-22f4-4875-af86-b84fe82a7edc",
+    "drop_id": "drop-1",
+    "user_id": "user1",
+    "price": 8999.00,
+    "quantity": 1,
+    "created_at": "2026-05-07T16:35:40+03:00"
+  },
+  "message": "Purchase successful"
+}
+```
+
+**Errors:**
+
+| Status | Error | When |
+|--------|-------|------|
+| `404` | `lock not found` | Bad lock ID |
+| `409` | `lock already confirmed` | Already used |
+| `409` | `lock already cancelled` | User cancelled |
+| `410` | `lock already expired` | 30s window passed |
+| `410` | `lock expired` | Expired during confirm attempt |
+
+---
+
+### 7. Cancel Lock
+
+```
+POST /api/drops/{id}/cancel
+Content-Type: application/json
+
+{"lock_id": "87fa955c-c6e8-4b64-b762-8c8e26ad00a9"}
+```
+
+**Response** `200 OK`
+```json
+{"message": "Lock cancelled, stock restored"}
+```
+
+**Errors:**
+
+| Status | Error | When |
+|--------|-------|------|
+| `404` | `lock not found` | Bad lock ID |
+| `409` | `lock already confirmed/expired/cancelled` | Not pending |
+
+---
+
+### 8. Create Drop (Admin)
 
 ```
 POST /api/drops
@@ -198,7 +259,7 @@ Content-Type: application/json
 
 ---
 
-### 7. Health Check
+### 9. Health Check
 
 ```
 GET /api/health  →  {"status": "ok"}
@@ -226,12 +287,22 @@ Join a drop's room. Server pushes JSON events. Client doesn't need to send messa
 ```
 `direction`: `"UP"`, `"DOWN"`, or `"STABLE"`
 
-#### STOCK_UPDATE (every tick + after purchase)
+#### STOCK_UPDATE (every tick + after lock/confirm/cancel/expiry)
 ```json
 {"type": "STOCK_UPDATE", "drop_id": "drop-1", "remaining_pct": 94.0}
 ```
 
-#### PURCHASE_FEED (after each purchase)
+#### PRICE_LOCK (when someone locks a price)
+```json
+{"type": "PRICE_LOCK", "drop_id": "drop-1", "quantity": 1}
+```
+
+#### LOCK_EXPIRED (when a lock expires without confirmation)
+```json
+{"type": "LOCK_EXPIRED", "drop_id": "drop-1", "quantity": 1}
+```
+
+#### PURCHASE_FEED (after confirmed purchase)
 ```json
 {"type": "PURCHASE_FEED", "drop_id": "drop-1", "price": 9496.01, "message": "m***c 9496.01 TL'den aldı!"}
 ```
@@ -279,12 +350,20 @@ onEnter:
   DROP_ENDED    → show ended state
 ```
 
-### 3. Buy Flow
+### 3. Buy Flow (Two-Step)
 ```
 Tap "Satin Al":
-  POST /api/drops/{id}/buy {user_id, quantity}
-  200 → success screen (show savings: start_price - purchase.price)
+  POST /api/drops/{id}/lock {user_id, quantity}
+  200 → show price lock sheet (locked_price, 30s countdown from expires_at)
   409 → error toast/alert
+
+On lock sheet:
+  User confirms → POST /api/drops/{id}/confirm {lock_id}
+    200 → success screen (show savings: start_price - purchase.price)
+    410 → lock expired, dismiss sheet
+  User cancels → POST /api/drops/{id}/cancel {lock_id}
+    200 → dismiss sheet, stock restored
+  30s timer expires → auto-cancel, dismiss sheet
 ```
 
 ---
@@ -326,14 +405,38 @@ struct Stats: Codable {
     let timeRemainingSeconds: Int
 }
 
-struct BuyRequest: Codable {
+struct LockRequest: Codable {
     let userId: String
     let quantity: Int
 }
 
-struct BuyResponse: Codable {
+struct LockResponse: Codable {
+    let lock: PriceLock
+    let message: String
+}
+
+struct PriceLock: Codable {
+    let id: String
+    let dropId: String
+    let userId: String
+    let lockedPrice: Double
+    let quantity: Int
+    let status: String       // "pending", "confirmed", "expired", "cancelled"
+    let createdAt: String
+    let expiresAt: String
+}
+
+struct ConfirmRequest: Codable {
+    let lockId: String
+}
+
+struct ConfirmResponse: Codable {
     let purchase: Purchase
     let message: String
+}
+
+struct CancelRequest: Codable {
+    let lockId: String
 }
 
 struct Purchase: Codable {
@@ -353,6 +456,8 @@ struct ErrorResponse: Codable {
 enum WSEvent {
     case priceUpdate(price: Double, prevPrice: Double, direction: String)
     case stockUpdate(remainingPct: Double)
+    case priceLock(quantity: Int)
+    case lockExpired(quantity: Int)
     case purchaseFeed(price: Double, message: String)
     case viewerCount(count: Int)
     case dropStatus(status: String)
@@ -397,10 +502,31 @@ data class Stats(
 )
 
 @Serializable
-data class BuyRequest(@SerialName("user_id") val userId: String, val quantity: Int)
+data class LockRequest(@SerialName("user_id") val userId: String, val quantity: Int)
 
 @Serializable
-data class BuyResponse(val purchase: Purchase, val message: String)
+data class LockResponse(val lock: PriceLock, val message: String)
+
+@Serializable
+data class PriceLock(
+    val id: String,
+    @SerialName("drop_id") val dropId: String,
+    @SerialName("user_id") val userId: String,
+    @SerialName("locked_price") val lockedPrice: Double,
+    val quantity: Int,
+    val status: String,
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("expires_at") val expiresAt: String
+)
+
+@Serializable
+data class ConfirmRequest(@SerialName("lock_id") val lockId: String)
+
+@Serializable
+data class ConfirmResponse(val purchase: Purchase, val message: String)
+
+@Serializable
+data class CancelRequest(@SerialName("lock_id") val lockId: String)
 
 @Serializable
 data class Purchase(
@@ -415,6 +541,8 @@ data class Purchase(
 // WS events — parse "type" first, then deserialize specific class
 @Serializable data class PriceUpdateEvent(val type: String, @SerialName("drop_id") val dropId: String, val price: Double, @SerialName("prev_price") val prevPrice: Double, val direction: String)
 @Serializable data class StockUpdateEvent(val type: String, @SerialName("drop_id") val dropId: String, @SerialName("remaining_pct") val remainingPct: Double)
+@Serializable data class PriceLockEvent(val type: String, @SerialName("drop_id") val dropId: String, val quantity: Int)
+@Serializable data class LockExpiredEvent(val type: String, @SerialName("drop_id") val dropId: String, val quantity: Int)
 @Serializable data class PurchaseFeedEvent(val type: String, @SerialName("drop_id") val dropId: String, val price: Double, val message: String)
 @Serializable data class ViewerCountEvent(val type: String, @SerialName("drop_id") val dropId: String, val count: Int)
 @Serializable data class DropStatusEvent(val type: String, @SerialName("drop_id") val dropId: String, val status: String)
@@ -459,18 +587,43 @@ struct TrendBorsaAPI {
         return try decoder.decode(Stats.self, from: data)
     }
 
-    func buy(dropId: String, userId: String, quantity: Int) async throws -> BuyResponse {
-        var request = URLRequest(url: URL(string: "\(baseURL)/api/drops/\(dropId)/buy")!)
+    func lockPrice(dropId: String, userId: String, quantity: Int) async throws -> LockResponse {
+        var request = URLRequest(url: URL(string: "\(baseURL)/api/drops/\(dropId)/lock")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body = BuyRequest(userId: userId, quantity: quantity)
-        request.httpBody = try JSONEncoder().encode(body)
+        request.httpBody = try JSONEncoder().encode(LockRequest(userId: userId, quantity: quantity))
         let (data, response) = try await URLSession.shared.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
             let err = try JSONDecoder().decode(ErrorResponse.self, from: data)
             throw NSError(domain: "TrendBorsa", code: 0, userInfo: [NSLocalizedDescriptionKey: err.error])
         }
-        return try decoder.decode(BuyResponse.self, from: data)
+        return try decoder.decode(LockResponse.self, from: data)
+    }
+
+    func confirmPurchase(dropId: String, lockId: String) async throws -> ConfirmResponse {
+        var request = URLRequest(url: URL(string: "\(baseURL)/api/drops/\(dropId)/confirm")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(ConfirmRequest(lockId: lockId))
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let err = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NSError(domain: "TrendBorsa", code: statusCode, userInfo: [NSLocalizedDescriptionKey: err.error])
+        }
+        return try decoder.decode(ConfirmResponse.self, from: data)
+    }
+
+    func cancelLock(dropId: String, lockId: String) async throws {
+        var request = URLRequest(url: URL(string: "\(baseURL)/api/drops/\(dropId)/cancel")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(CancelRequest(lockId: lockId))
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            let err = try JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw NSError(domain: "TrendBorsa", code: 0, userInfo: [NSLocalizedDescriptionKey: err.error])
+        }
     }
 }
 ```
@@ -521,6 +674,10 @@ class PriceStreamClient {
                                 direction: json["direction"] as? String ?? "STABLE")
         case "STOCK_UPDATE":
             return .stockUpdate(remainingPct: json["remaining_pct"] as? Double ?? 0)
+        case "PRICE_LOCK":
+            return .priceLock(quantity: json["quantity"] as? Int ?? 0)
+        case "LOCK_EXPIRED":
+            return .lockExpired(quantity: json["quantity"] as? Int ?? 0)
         case "PURCHASE_FEED":
             return .purchaseFeed(price: json["price"] as? Double ?? 0,
                                 message: json["message"] as? String ?? "")
@@ -553,8 +710,14 @@ interface TrendBorsaApi {
     @GET("api/drops/{id}/stats")
     suspend fun getStats(@Path("id") id: String): Stats
 
-    @POST("api/drops/{id}/buy")
-    suspend fun buy(@Path("id") id: String, @Body request: BuyRequest): BuyResponse
+    @POST("api/drops/{id}/lock")
+    suspend fun lockPrice(@Path("id") id: String, @Body request: LockRequest): LockResponse
+
+    @POST("api/drops/{id}/confirm")
+    suspend fun confirmPurchase(@Path("id") id: String, @Body request: ConfirmRequest): ConfirmResponse
+
+    @POST("api/drops/{id}/cancel")
+    suspend fun cancelLock(@Path("id") id: String, @Body request: CancelRequest)
 }
 ```
 
@@ -575,6 +738,8 @@ class PriceStreamClient(private val client: OkHttpClient) {
                 val event = when (json.getString("type")) {
                     "PRICE_UPDATE" -> WSEvent.PriceUpdate(json.getDouble("price"), json.getDouble("prev_price"), json.getString("direction"))
                     "STOCK_UPDATE" -> WSEvent.StockUpdate(json.getDouble("remaining_pct"))
+                    "PRICE_LOCK" -> WSEvent.PriceLock(json.getInt("quantity"))
+                    "LOCK_EXPIRED" -> WSEvent.LockExpired(json.getInt("quantity"))
                     "PURCHASE_FEED" -> WSEvent.PurchaseFeed(json.getDouble("price"), json.getString("message"))
                     "VIEWER_COUNT" -> WSEvent.ViewerCount(json.getInt("count"))
                     "DROP_STATUS" -> WSEvent.DropStatus(json.getString("status"))
@@ -590,6 +755,8 @@ class PriceStreamClient(private val client: OkHttpClient) {
 sealed class WSEvent {
     data class PriceUpdate(val price: Double, val prevPrice: Double, val direction: String) : WSEvent()
     data class StockUpdate(val remainingPct: Double) : WSEvent()
+    data class PriceLock(val quantity: Int) : WSEvent()
+    data class LockExpired(val quantity: Int) : WSEvent()
     data class PurchaseFeed(val price: Double, val message: String) : WSEvent()
     data class ViewerCount(val count: Int) : WSEvent()
     data class DropStatus(val status: String) : WSEvent()

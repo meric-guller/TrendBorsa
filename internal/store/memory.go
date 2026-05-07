@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ type MemoryStore struct {
 	drops        map[string]*model.Drop
 	purchases    map[string][]model.Purchase
 	priceHistory map[string][]model.PricePoint
+	locks        map[string]*model.PriceLock
 }
 
 func New() *MemoryStore {
@@ -20,6 +22,7 @@ func New() *MemoryStore {
 		drops:        make(map[string]*model.Drop),
 		purchases:    make(map[string][]model.Purchase),
 		priceHistory: make(map[string][]model.PricePoint),
+		locks:        make(map[string]*model.PriceLock),
 	}
 }
 
@@ -92,6 +95,76 @@ func (s *MemoryStore) GetUserPurchaseCount(dropID, userID string) int {
 		}
 	}
 	return count
+}
+
+func (s *MemoryStore) SaveLock(l *model.PriceLock) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.locks[l.ID] = l
+}
+
+func (s *MemoryStore) GetLock(id string) (*model.PriceLock, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	l, ok := s.locks[id]
+	return l, ok
+}
+
+func (s *MemoryStore) GetExpiredLocks(now time.Time) []*model.PriceLock {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var result []*model.PriceLock
+	for _, l := range s.locks {
+		if l.Status == "pending" && now.After(l.ExpiresAt) {
+			result = append(result, l)
+		}
+	}
+	return result
+}
+
+// ReserveStock atomically checks user limit + stock and decrements under a single lock.
+func (s *MemoryStore) ReserveStock(dropID, userID string, quantity, maxPerUser int) (*model.Drop, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	drop, ok := s.drops[dropID]
+	if !ok {
+		return nil, errors.New("drop not found")
+	}
+	if drop.Status != "active" {
+		return nil, errors.New("drop is not active")
+	}
+
+	// Count confirmed purchases + pending locks for this user
+	userUsage := 0
+	for _, p := range s.purchases[dropID] {
+		if p.UserID == userID {
+			userUsage += p.Quantity
+		}
+	}
+	for _, l := range s.locks {
+		if l.DropID == dropID && l.UserID == userID && l.Status == "pending" {
+			userUsage += l.Quantity
+		}
+	}
+	if userUsage+quantity > maxPerUser {
+		return nil, errors.New("purchase limit exceeded")
+	}
+	if drop.RemainingStock < quantity {
+		return nil, errors.New("not enough stock")
+	}
+
+	drop.RemainingStock -= quantity
+	return drop, nil
+}
+
+// RestoreStock adds quantity back to the drop's remaining stock.
+func (s *MemoryStore) RestoreStock(dropID string, quantity int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if drop, ok := s.drops[dropID]; ok {
+		drop.RemainingStock += quantity
+	}
 }
 
 func (s *MemoryStore) Seed() {
