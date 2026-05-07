@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 
@@ -18,10 +19,12 @@ func main() {
 	cfg := config.Load()
 
 	s := store.New()
+	s.Seed()
 	h := hub.New()
-	_ = engine.New(s, h)
+	eng := engine.New(s, h, cfg.TickInterval)
+	go eng.Run(context.Background())
 
-	dropH := handler.NewDropHandler(s)
+	dropH := handler.NewDropHandler(s, h)
 	purchaseH := handler.NewPurchaseHandler(s, h)
 	wsH := handler.NewWSHandler(h)
 
@@ -43,8 +46,10 @@ func main() {
 
 	r.Route("/api/drops", func(r chi.Router) {
 		r.Get("/", dropH.List)
+		r.Post("/", dropH.Create)
 		r.Get("/{id}", dropH.Get)
 		r.Get("/{id}/history", dropH.History)
+		r.Get("/{id}/stats", dropH.Stats)
 		r.Post("/{id}/buy", purchaseH.Buy)
 	})
 

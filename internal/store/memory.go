@@ -1,7 +1,9 @@
 package store
 
 import (
+	"fmt"
 	"sync"
+	"time"
 
 	"github.com/mericguller/trendborse-backend/internal/model"
 )
@@ -66,4 +68,113 @@ func (s *MemoryStore) GetPriceHistory(dropID string) []model.PricePoint {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.priceHistory[dropID]
+}
+
+func (s *MemoryStore) GetRecentPurchaseCount(dropID string, since time.Time) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, p := range s.purchases[dropID] {
+		if p.CreatedAt.After(since) {
+			count += p.Quantity
+		}
+	}
+	return count
+}
+
+func (s *MemoryStore) GetUserPurchaseCount(dropID, userID string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, p := range s.purchases[dropID] {
+		if p.UserID == userID {
+			count += p.Quantity
+		}
+	}
+	return count
+}
+
+func (s *MemoryStore) Seed() {
+	now := time.Now()
+
+	drops := []model.Drop{
+		{
+			ID:             "drop-1",
+			ProductName:    "Sony WH-1000XM5 Kulaklık",
+			ProductImage:   "https://cdn.trendyol.com/sony-wh1000xm5.jpg",
+			Description:    "Aktif Gürültü Önleme özellikli premium kablosuz kulaklık",
+			StartPrice:     8999,
+			CurrentPrice:   8999,
+			FloorPrice:     5399,
+			CeilingPrice:   12599,
+			TotalStock:     50,
+			RemainingStock: 50,
+			StartsAt:       now.Add(-1 * time.Minute),
+			EndsAt:         now.Add(19 * time.Minute),
+			Status:         "active",
+			Volatility:     0.03,
+			CreatedAt:      now,
+		},
+		{
+			ID:             "drop-2",
+			ProductName:    "iPhone 16 Pro Max Kılıf",
+			ProductImage:   "https://cdn.trendyol.com/iphone16-case.jpg",
+			Description:    "Premium silikon koruma kılıfı - MagSafe uyumlu",
+			StartPrice:     599,
+			CurrentPrice:   599,
+			FloorPrice:     359,
+			CeilingPrice:   839,
+			TotalStock:     200,
+			RemainingStock: 200,
+			StartsAt:       now.Add(5 * time.Minute),
+			EndsAt:         now.Add(25 * time.Minute),
+			Status:         "upcoming",
+			Volatility:     0.04,
+			CreatedAt:      now,
+		},
+		{
+			ID:             "drop-3",
+			ProductName:    "Nike Air Max 90",
+			ProductImage:   "https://cdn.trendyol.com/nike-airmax90.jpg",
+			Description:    "Klasik tasarım, modern konfor - Unisex spor ayakkabı",
+			StartPrice:     4299,
+			CurrentPrice:   4299,
+			FloorPrice:     2579,
+			CeilingPrice:   6019,
+			TotalStock:     30,
+			RemainingStock: 30,
+			StartsAt:       now.Add(-2 * time.Minute),
+			EndsAt:         now.Add(18 * time.Minute),
+			Status:         "active",
+			Volatility:     0.03,
+			CreatedAt:      now,
+		},
+		{
+			ID:             "drop-4",
+			ProductName:    "Dyson V15 Süpürge",
+			ProductImage:   "https://cdn.trendyol.com/dyson-v15.jpg",
+			Description:    "Lazer toz algılama teknolojili kablosuz süpürge",
+			StartPrice:     24999,
+			CurrentPrice:   24999,
+			FloorPrice:     14999,
+			CeilingPrice:   34999,
+			TotalStock:     15,
+			RemainingStock: 15,
+			StartsAt:       now.Add(10 * time.Minute),
+			EndsAt:         now.Add(30 * time.Minute),
+			Status:         "upcoming",
+			Volatility:     0.02,
+			CreatedAt:      now,
+		},
+	}
+
+	for i := range drops {
+		s.SaveDrop(&drops[i])
+		s.AddPricePoint(drops[i].ID, model.PricePoint{
+			Price:     drops[i].StartPrice,
+			Timestamp: now,
+		})
+	}
+
+	fmt.Printf("Seeded %d drops\n", len(drops))
 }
