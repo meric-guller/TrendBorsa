@@ -174,7 +174,7 @@ func (s *MemoryStore) Seed() {
 		{
 			ID:             "drop-1",
 			ProductName:    "Sony WH-1000XM5 Kulaklık",
-			ProductImage:   "https://cdn.trendyol.com/sony-wh1000xm5.jpg",
+			ProductImage:   "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400&q=80",
 			Description:    "Aktif Gürültü Önleme özellikli premium kablosuz kulaklık",
 			StartPrice:     8999,
 			CurrentPrice:   8999,
@@ -191,7 +191,7 @@ func (s *MemoryStore) Seed() {
 		{
 			ID:             "drop-2",
 			ProductName:    "iPhone 16 Pro Max Kılıf",
-			ProductImage:   "https://cdn.trendyol.com/iphone16-case.jpg",
+			ProductImage:   "https://images.unsplash.com/photo-1601784551446-20c9e07cdbdb?w=400&q=80",
 			Description:    "Premium silikon koruma kılıfı - MagSafe uyumlu",
 			StartPrice:     599,
 			CurrentPrice:   599,
@@ -208,7 +208,7 @@ func (s *MemoryStore) Seed() {
 		{
 			ID:             "drop-3",
 			ProductName:    "Nike Air Max 90",
-			ProductImage:   "https://cdn.trendyol.com/nike-airmax90.jpg",
+			ProductImage:   "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=400&q=80",
 			Description:    "Klasik tasarım, modern konfor - Unisex spor ayakkabı",
 			StartPrice:     4299,
 			CurrentPrice:   4299,
@@ -225,7 +225,7 @@ func (s *MemoryStore) Seed() {
 		{
 			ID:             "drop-4",
 			ProductName:    "Dyson V15 Süpürge",
-			ProductImage:   "https://cdn.trendyol.com/dyson-v15.jpg",
+			ProductImage:   "https://images.unsplash.com/photo-1558317374-067fb5f30001?w=400&q=80",
 			Description:    "Lazer toz algılama teknolojili kablosuz süpürge",
 			StartPrice:     24999,
 			CurrentPrice:   24999,
